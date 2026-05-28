@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Pitcher vs. batter matchup analyzer — log5-blended per-PA outcome probabilities using FanGraphs and Stuff+ data.">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src 'self' https://fonts.gstatic.com;
+  img-src 'self' data:;
+  connect-src 'self';
+  frame-ancestors 'none';
+  base-uri 'self';
+  form-action 'none';
+">
+<title>Matchup Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preload" as="fetch" href="data/pitchers.json" type="application/json" crossorigin="anonymous">
+<link rel="preload" as="fetch" href="data/batters.json" type="application/json" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<script src="js/matchup-model.js" defer></script>
+<script src="js/data-loader.js" defer></script>
+<script src="js/ui.js" defer></script>
+</head>
+<body>
+  <header class="hdr">
+    <div class="hdr-inner">
+      <h1>Matchup Analyzer</h1>
+      <span class="hdr-sub">log5 × Stuff+ × handedness — predicts per-PA outcome distribution</span>
+      <span class="meta-line" id="meta-line"></span>
+    </div>
+  </header>
+
+  <main id="app">
+    <section class="picker">
+      <div class="picker-card">
+        <label class="lbl" for="pitcher-select">Pitcher</label>
+        <select id="pitcher-select"></select>
+      </div>
+      <div class="picker-card">
+        <label class="lbl" for="batter-select">Batter</label>
+        <select id="batter-select"></select>
+      </div>
+    </section>
+
+    <section id="result" class="result">
+      <div class="hint">Loading data&hellip;</div>
+    </section>
+  </main>
+
+  <footer class="ftr">
+    <div class="ftr-inner">
+      <span>Data: FanGraphs (qualified-ish rolling pulls)</span>
+      <span>Model: log5 + Stuff+/Loc+ tilt + The Book platoon split</span>
+      <span><a href="https://github.com/jackmueller53-sys/pitcher-batter-matchup" rel="noopener noreferrer">source</a></span>
+    </div>
+  </footer>
+</body>
+</html>
