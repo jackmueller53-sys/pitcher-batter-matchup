@@ -1,4 +1,4 @@
-name: Fetch matchup data
+name: Fetch matchup data + features
 
 on:
   schedule:
@@ -17,9 +17,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
 
-      - name: Fetch
+      - name: Install Python deps
+        run: pip install --quiet pybaseball pandas numpy pyarrow
+
+      - name: Fetch FanGraphs season stats
         run: node scripts/fetch-data.js
+
+      - name: Build Statcast-derived features
+        run: python3 scripts/build_features.py
+        continue-on-error: true   # don't fail the cron if Statcast is briefly down
 
       - name: Check for changes
         id: check
@@ -37,7 +46,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "Refresh matchup data — $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git commit -m "Refresh data + features — $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push
 
       - name: Trigger deploy

@@ -55,7 +55,16 @@
     const p = _pitchers[pi];
     const b = _batters[bi];
     const lg = window.MatchupData.league;
-    const m = window.MatchupModel.matchup(p, b, lg);
+    const D = window.MatchupData;
+    const ctx = {
+      bat_split:    D.bat_splits[b.id],
+      pit_split:    D.pit_splits[p.id],
+      bat_whiff:    D.bat_whiff[b.id],
+      pit_arsenal:  D.pit_arsenal[p.id],
+      park_factors: D.park_factors,
+      home_team:    p.team || null, // pitcher's team is home in current single-matchup view
+    };
+    const m = window.MatchupModel.matchup(p, b, lg, ctx);
     if (!m) {
       out.innerHTML = '<div class="hint err">Could not compute matchup (missing fields).</div>';
       return;
