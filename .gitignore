@@ -3,3 +3,5 @@ node_modules/
 *.log
 data/*.tmp.json
 _site/
+backtest/__pycache__/
+scripts/__pycache__/
