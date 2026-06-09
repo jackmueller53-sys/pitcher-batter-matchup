@@ -7,27 +7,69 @@
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+  // ─── Selected players (current matchup) ───
+  let _pickedPitcher = null;
+  let _pickedBatter = null;
+
   function setupSelects() {
     const pitchers = window.MatchupData.pitchers
       .slice().sort((a, b) => (b.ip || 0) - (a.ip || 0));
     const batters = window.MatchupData.batters
       .slice().sort((a, b) => (b.pa || 0) - (a.pa || 0));
 
-    const pSel = $('pitcher-select');
-    const bSel = $('batter-select');
+    // Pitcher typeahead
+    window.Typeahead.attach({
+      inputEl: $('pitcher-input'),
+      items: pitchers,
+      renderRow: (p, q) => `
+        <div class="ta-row-name">${highlight(p.name, q)}</div>
+        <div class="ta-row-meta">
+          <span class="ta-team">${escHTML(p.team || '?')}</span>
+          <span class="ta-hand">${escHTML(p.throws || '?')}HP</span>
+          ${p.ip != null ? `<span class="ta-stat">${p.ip.toFixed(1)} IP</span>` : ''}
+          ${p.stuff_plus != null ? `<span class="ta-stat">Stuff+ ${p.stuff_plus.toFixed(0)}</span>` : ''}
+          ${p.k_pct != null ? `<span class="ta-stat">${pctText(p.k_pct, 1)} K%</span>` : ''}
+        </div>
+      `,
+      onSelect: (p) => { _pickedPitcher = p; render(); },
+    });
 
-    pSel.innerHTML = '<option value="">— select pitcher —</option>'
-      + pitchers.map((p, i) => `<option value="${i}">${escHTML(p.name)}`
-        + ` (${escHTML(p.team || '?')}, ${escHTML(p.throws || '?')}HP)</option>`).join('');
-
-    bSel.innerHTML = '<option value="">— select batter —</option>'
-      + batters.map((b, i) => `<option value="${i}">${escHTML(b.name)}`
-        + ` (${escHTML(b.team || '?')}${b.bats ? ', ' + escHTML(b.bats) + 'HB' : ''})</option>`).join('');
-
-    pSel.addEventListener('change', render);
-    bSel.addEventListener('change', render);
+    // Batter typeahead
+    window.Typeahead.attach({
+      inputEl: $('batter-input'),
+      items: batters,
+      renderRow: (b, q) => `
+        <div class="ta-row-name">${highlight(b.name, q)}</div>
+        <div class="ta-row-meta">
+          <span class="ta-team">${escHTML(b.team || '?')}</span>
+          <span class="ta-hand">${escHTML(b.bats || '?')}HB</span>
+          ${b.pa != null ? `<span class="ta-stat">${b.pa.toFixed(0)} PA</span>` : ''}
+          ${b.wrc_plus != null ? `<span class="ta-stat">wRC+ ${b.wrc_plus.toFixed(0)}</span>` : ''}
+          ${b.woba != null ? `<span class="ta-stat">${b.woba.toFixed(3)} wOBA</span>` : ''}
+        </div>
+      `,
+      onSelect: (b) => { _pickedBatter = b; render(); },
+    });
 
     return { pitchers, batters };
+  }
+
+  // Used by typeahead row-renderers — highlights matched substring.
+  function highlight(text, query) {
+    if (!query) return escHTML(text);
+    const t = text || '';
+    const tn = t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const qn = String(query).toLowerCase();
+    const i = tn.indexOf(qn);
+    if (i < 0) return escHTML(t);
+    return escHTML(t.slice(0, i))
+      + '<mark>' + escHTML(t.slice(i, i + qn.length)) + '</mark>'
+      + escHTML(t.slice(i + qn.length));
+  }
+
+  function pctText(v, d) {
+    if (v == null) return '—';
+    return (v > 1 ? v : v * 100).toFixed(d ?? 1);
   }
 
   function pct(v, digits = 1) { return v == null ? '—' : (v * 100).toFixed(digits) + '%'; }
@@ -45,15 +87,12 @@
   }
 
   function render() {
-    const pi = parseInt($('pitcher-select').value, 10);
-    const bi = parseInt($('batter-select').value, 10);
     const out = $('result');
-    if (isNaN(pi) || isNaN(bi)) {
-      out.innerHTML = '<div class="hint">Pick a pitcher and a batter to see the matchup.</div>';
+    const p = _pickedPitcher, b = _pickedBatter;
+    if (!p || !b) {
+      out.innerHTML = '<div class="hint">Search for a pitcher and a batter to see the matchup.</div>';
       return;
     }
-    const p = _pitchers[pi];
-    const b = _batters[bi];
     const lg = window.MatchupData.league;
     const D = window.MatchupData;
     const ctx = {
@@ -133,8 +172,6 @@
     `;
   }
 
-  let _pitchers = [], _batters = [];
-
   document.addEventListener('DOMContentLoaded', function () {
     const meta = $('meta-line');
     window.MatchupData.ready.then(() => {
@@ -144,13 +181,34 @@
         return;
       }
       const { pitchers, batters } = setupSelects();
-      _pitchers = pitchers;
-      _batters = batters;
       if (meta && window.MatchupData.meta) {
         const m = window.MatchupData.meta;
         meta.textContent = `Season ${m.season} · ${pitchers.length} pitchers · ${batters.length} batters · fetched ${new Date(m.fetchedAt).toLocaleString()}`;
       }
+      // Initialize runs predictor (if present)
+      if (window.RunsPredictorUI) window.RunsPredictorUI.init(pitchers, batters);
       render();
+      setupModeTabs();
     });
   });
+
+  function setupModeTabs() {
+    const tabs = document.querySelectorAll('.mode-tab');
+    tabs.forEach((t) => {
+      t.addEventListener('click', () => {
+        tabs.forEach((x) => {
+          x.classList.remove('active');
+          x.setAttribute('aria-selected', 'false');
+        });
+        t.classList.add('active');
+        t.setAttribute('aria-selected', 'true');
+        const mode = t.dataset.mode;
+        document.querySelectorAll('.mode-section').forEach((s) => {
+          const on = s.id === 'mode-' + mode;
+          s.classList.toggle('active', on);
+          s.hidden = !on;
+        });
+      });
+    });
+  }
 })();

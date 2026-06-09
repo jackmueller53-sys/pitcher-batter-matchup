@@ -25,6 +25,8 @@
 <link rel="stylesheet" href="css/styles.css">
 <script src="js/matchup-model.js" defer></script>
 <script src="js/data-loader.js" defer></script>
+<script src="js/typeahead.js" defer></script>
+<script src="js/runs-predictor.js" defer></script>
 <script src="js/ui.js" defer></script>
 </head>
 <body>
@@ -37,19 +39,51 @@
   </header>
 
   <main id="app">
-    <section class="picker">
-      <div class="picker-card">
-        <label class="lbl" for="pitcher-select">Pitcher</label>
-        <select id="pitcher-select"></select>
+    <nav class="mode-tabs" role="tablist" aria-label="Mode">
+      <button class="mode-tab active" role="tab" aria-selected="true" data-mode="matchup">Single matchup</button>
+      <button class="mode-tab" role="tab" aria-selected="false" data-mode="runs">Predicted runs (team vs pitcher)</button>
+    </nav>
+
+    <section id="mode-matchup" class="mode-section active">
+      <div class="picker">
+        <div class="picker-card">
+          <label class="lbl" for="pitcher-input">Pitcher</label>
+          <div class="ta-wrap">
+            <input id="pitcher-input" type="text" placeholder="Type a pitcher's name&hellip;">
+          </div>
+        </div>
+        <div class="picker-card">
+          <label class="lbl" for="batter-input">Batter</label>
+          <div class="ta-wrap">
+            <input id="batter-input" type="text" placeholder="Type a batter's name&hellip;">
+          </div>
+        </div>
       </div>
-      <div class="picker-card">
-        <label class="lbl" for="batter-select">Batter</label>
-        <select id="batter-select"></select>
-      </div>
+
+      <section id="result" class="result">
+        <div class="hint">Loading data&hellip;</div>
+      </section>
     </section>
 
-    <section id="result" class="result">
-      <div class="hint">Loading data&hellip;</div>
+    <section id="mode-runs" class="mode-section" hidden>
+      <div class="picker">
+        <div class="picker-card">
+          <label class="lbl" for="runs-team-input">Hitting team</label>
+          <div class="ta-wrap">
+            <input id="runs-team-input" type="text" placeholder="Type a team name or abbr&hellip;">
+          </div>
+        </div>
+        <div class="picker-card">
+          <label class="lbl" for="runs-pitcher-input">Pitcher</label>
+          <div class="ta-wrap">
+            <input id="runs-pitcher-input" type="text" placeholder="Type a pitcher's name&hellip;">
+          </div>
+        </div>
+      </div>
+
+      <div id="runs-result" class="result">
+        <div class="hint">Pick a team and a pitcher to project expected runs.</div>
+      </div>
     </section>
   </main>
 
