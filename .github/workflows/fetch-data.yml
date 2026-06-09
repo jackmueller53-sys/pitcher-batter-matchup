@@ -21,7 +21,7 @@ jobs:
         with: { python-version: '3.11' }
 
       - name: Install Python deps
-        run: pip install --quiet pybaseball pandas numpy pyarrow
+        run: pip install --quiet pybaseball pandas numpy pyarrow certifi
 
       - name: Fetch FanGraphs season stats
         run: node scripts/fetch-data.js

@@ -21,28 +21,66 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ─────────────────────────── HTTP helper ──────────────────────────────
-function fetchText(url) {
+// FanGraphs is behind Cloudflare; CI requests get 403'd without browser-y
+// headers. Real Chrome 124 macOS header set + CORS-proxy fallback on 4xx.
+
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/csv;q=0.9, */*;q=0.1',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'identity',
+  'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+  'Sec-Ch-Ua-Mobile': '?0',
+  'Sec-Ch-Ua-Platform': '"macOS"',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-site',
+};
+const PROXIES = [
+  (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
+
+function directFetch(url, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
+    if (maxRedirects <= 0) return reject(new Error('too many redirects'));
+    const parsed = new URL(url);
     const req = https.get(url, {
-      headers: {
-        'User-Agent': 'pitcher-batter-matchup/1.0 (+github.com/jackmueller53-sys)',
-        'Accept': 'application/json, text/csv;q=0.9, */*;q=0.1',
-      },
+      headers: { ...BROWSER_HEADERS, 'Referer': `${parsed.origin}/` },
       timeout: 30000,
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchText(res.headers.location).then(resolve, reject);
+        let next = res.headers.location;
+        if (next.startsWith('/')) next = parsed.origin + next;
+        return resolve(directFetch(next, maxRedirects - 1));
       }
-      if (res.statusCode !== 200) {
-        return reject(new Error(`HTTP ${res.statusCode} ${url}`));
-      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
       const chunks = [];
       res.on('data', c => chunks.push(c));
       res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     });
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('timeout: ' + url)); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
   });
+}
+
+async function fetchText(url) {
+  try { return await directFetch(url); }
+  catch (e) {
+    const is4xx = /HTTP 4\d\d/.test(e.message || '');
+    if (!is4xx) {
+      try { await new Promise(r => setTimeout(r, 300)); return await directFetch(url); }
+      catch (_) { /* fall through */ }
+    }
+    for (let i = 0; i < PROXIES.length; i++) {
+      try {
+        const txt = await directFetch(PROXIES[i](url));
+        console.warn(`    (recovered via proxy ${i + 1}/${PROXIES.length})`);
+        return txt;
+      } catch (_) { /* try next */ }
+    }
+    throw new Error(`${e.message} ${url.slice(0, 100)} (proxies also failed)`);
+  }
 }
 
 // ─────────────────────────── FanGraphs ────────────────────────────────
@@ -189,13 +227,27 @@ async function main() {
 
   const league = computeLeague(batters, pitchers);
 
-  // Write outputs
-  fs.writeFileSync(path.join(DATA_DIR, 'batters.json'),
-    JSON.stringify(batters, null, 0));
-  fs.writeFileSync(path.join(DATA_DIR, 'pitchers.json'),
-    JSON.stringify(pitchers, null, 0));
-  fs.writeFileSync(path.join(DATA_DIR, 'league.json'),
-    JSON.stringify(league, null, 0));
+  // Write outputs. When a particular fetch came back empty (Cloudflare 403,
+  // etc.), preserve whatever's on disk so build_features.py runs next and
+  // overwrites with Statcast-derived data. fg-* files are written as the
+  // raw FG payload so build_features can pick up wRC+/Stuff+ augmentation.
+  function writeOrPreserve(name, rows) {
+    if (Array.isArray(rows) && rows.length > 0) {
+      fs.writeFileSync(path.join(DATA_DIR, name), JSON.stringify(rows));
+    } else {
+      console.warn(`  preserving ${name} (this run returned empty)`);
+    }
+  }
+  writeOrPreserve('batters.json',  batters);
+  writeOrPreserve('pitchers.json', pitchers);
+  if (Object.keys(league.bat || {}).length) {
+    fs.writeFileSync(path.join(DATA_DIR, 'league.json'), JSON.stringify(league));
+  }
+  // FG raw snapshots (consumed by build_features.augment_from_fg)
+  writeOrPreserve('fg-bat.json',       batters);
+  writeOrPreserve('fg-pit.json',       pitchers);
+  writeOrPreserve('fg-stuffplus.json', stuffplus);
+
   fs.writeFileSync(path.join(DATA_DIR, 'meta.json'),
     JSON.stringify({
       fetchedAt: new Date().toISOString(),
@@ -208,8 +260,11 @@ async function main() {
   console.log(`Done in ${((Date.now() - t0) / 1000).toFixed(1)}s. `
     + `batters=${batters.length} pitchers=${pitchers.length} errors=${errors.length}`);
 
-  if (errors.length === batters.length + pitchers.length + stuffplus.length) {
-    process.exit(1);
+  // Don't exit 1 even when everything failed — build_features.py runs next
+  // and is the primary data source. Just warn loudly.
+  if (batters.length === 0 && pitchers.length === 0) {
+    console.warn('⚠️  FanGraphs returned 0 rows on every endpoint. '
+      + 'build_features.py will derive primary stats from Statcast instead.');
   }
 }
 

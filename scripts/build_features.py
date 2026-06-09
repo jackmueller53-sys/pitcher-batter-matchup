@@ -162,29 +162,283 @@ def compute_arsenal(pitches):
     return out
 
 
+def mlb_people_lookup(ids):
+    """Resolve {mlbam_id: {fullName, bats, throwHand}} via MLB Stats API.
+    Free + unauthenticated; accepts up to ~1000 IDs at a time."""
+    import urllib.request, ssl
+    out = {}
+    ids = list({int(i) for i in ids if i is not None})
+    if not ids: return out
+    # batch in 500s to keep URL length safe
+    ctx = ssl.create_default_context()
+    try: import certifi; ctx.load_verify_locations(certifi.where())
+    except Exception: pass
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i+500]
+        url = ('https://statsapi.mlb.com/api/v1/people?personIds='
+               + ','.join(str(x) for x in chunk))
+        try:
+            raw = urllib.request.urlopen(
+                urllib.request.Request(url, headers={'User-Agent': 'matchup/1.1'}),
+                context=ctx, timeout=30).read()
+            j = json.loads(raw.decode())
+            for p in (j.get('people') or []):
+                out[int(p['id'])] = {
+                    'fullName': p.get('fullName'),
+                    'bats': (p.get('batSide') or {}).get('code'),
+                    'throws': (p.get('pitchHand') or {}).get('code'),
+                }
+        except Exception as e:
+            print(f'  MLB people lookup chunk failed ({i}-{i+500}): {e}')
+    return out
+
+
+def player_meta(sc):
+    """For each MLBAM id, latest seen (name, team, bats, throws)."""
+    out = {'bat': {}, 'pit': {}}
+    sc2 = sc.sort_values('game_date')  # latest-wins
+    for _, r in sc2[['batter', 'stand']].drop_duplicates('batter').iterrows():
+        out['bat'][int(r['batter'])] = {'bats': r.get('stand') or None}
+    for _, r in sc2[['pitcher', 'p_throws']].drop_duplicates('pitcher').iterrows():
+        out['pit'][int(r['pitcher'])] = {'throws': r.get('p_throws') or None}
+    # Try to enrich with team + name from latest game.
+    if 'home_team' in sc2.columns:
+        last = sc2.sort_values(['game_pk', 'at_bat_number', 'pitch_number']).groupby(
+            ['batter', 'inning_topbot'], as_index=False).tail(1)
+        for _, r in last.iterrows():
+            bid = int(r['batter'])
+            tt = r['away_team'] if r.get('inning_topbot') == 'Top' else r['home_team']
+            if bid in out['bat'] and tt: out['bat'][bid]['team'] = tt
+        last_p = sc2.sort_values(['game_pk', 'at_bat_number', 'pitch_number']).groupby(
+            ['pitcher', 'inning_topbot'], as_index=False).tail(1)
+        for _, r in last_p.iterrows():
+            pid = int(r['pitcher'])
+            tt = r['home_team'] if r.get('inning_topbot') == 'Top' else r['away_team']
+            if pid in out['pit'] and tt: out['pit'][pid]['team'] = tt
+    return out
+
+
+def compute_batters_from_statcast(pa, meta):
+    """Derive seasonal batter rows from PA outcomes.
+
+    Uses linear-weights wOBA (FG values, close enough year to year):
+        BB=0.69, HBP=0.72, 1B=0.89, 2B=1.27, 3B=1.62, HR=2.10
+    """
+    LIN = {'BB': 0.690, 'HBP': 0.720, 'single': 0.890,
+           'double': 1.271, 'triple': 1.616, 'HR': 2.101}
+    out = []
+    for bid, g in pa.groupby('batter'):
+        n = len(g)
+        if n < 25: continue  # min PA threshold
+        c = {e: int((g['outcome'] == e).sum()) for e in
+             ['K', 'BB', 'HBP', 'HR', 'triple', 'double', 'single', 'out_in_play']}
+        ab = n - c['BB'] - c['HBP']
+        h = c['single'] + c['double'] + c['triple'] + c['HR']
+        bip_n = c['single'] + c['double'] + c['triple'] + c['out_in_play']
+        avg = h / ab if ab > 0 else None
+        obp = (h + c['BB'] + c['HBP']) / n
+        tb = c['single'] + 2 * c['double'] + 3 * c['triple'] + 4 * c['HR']
+        slg = tb / ab if ab > 0 else None
+        iso = (slg - avg) if (slg is not None and avg is not None) else None
+        babip = (h - c['HR']) / (ab - c['K'] - c['HR']) if (ab - c['K'] - c['HR']) > 0 else None
+        woba_num = sum(LIN[e] * c[e] for e in LIN)
+        woba_den = n - 0  # no IBB column; treat all BB as included
+        woba = woba_num / woba_den if woba_den > 0 else None
+        m = meta['bat'].get(int(bid), {})
+        out.append({
+            'id': int(bid), 'name': m.get('name'), 'team': m.get('team'),
+            'bats': m.get('bats'),
+            'pa': n, 'ab': ab, 'hr': c['HR'],
+            'avg': round(avg, 4) if avg is not None else None,
+            'obp': round(obp, 4),
+            'slg': round(slg, 4) if slg is not None else None,
+            'iso': round(iso, 4) if iso is not None else None,
+            'babip': round(babip, 4) if babip is not None else None,
+            'woba': round(woba, 4) if woba is not None else None,
+            'wrc_plus': None,        # FG augmentation fills this when available
+            'k_pct': round(c['K'] / n, 4),
+            'bb_pct': round(c['BB'] / n, 4),
+        })
+    return out
+
+
+def compute_pitchers_from_statcast(pa, sc, meta):
+    """Derive seasonal pitcher rows + classify starters vs relievers from
+    appearance pattern. A pitcher's GS = # of games where they recorded
+    the first PA of any half-inning where the inning was 1; G = # games."""
+    # Determine G + GS per pitcher
+    appear = pa.drop_duplicates(['game_pk', 'pitcher'])[['game_pk', 'pitcher']]
+    g_counts = appear.groupby('pitcher').size().to_dict()
+    # GS = games where pitcher faced a batter in inning 1
+    starters_set = pa[pa['inning'] == 1][['game_pk', 'pitcher']].drop_duplicates()
+    gs_counts = starters_set.groupby('pitcher').size().to_dict()
+
+    # IP via outs recorded (out_in_play + K) / 3
+    out = []
+    for pid, g in pa.groupby('pitcher'):
+        n = len(g)
+        if n < 25: continue
+        c = {e: int((g['outcome'] == e).sum()) for e in
+             ['K', 'BB', 'HBP', 'HR', 'triple', 'double', 'single', 'out_in_play']}
+        outs_recorded = c['K'] + c['out_in_play']
+        # 1 IP ≈ 3 outs. Use integer 'whole' + remainder * .1 for FG-style display.
+        ip_whole = outs_recorded // 3
+        ip_rem = outs_recorded % 3
+        ip = ip_whole + (ip_rem / 10.0)
+        ab = n - c['BB'] - c['HBP']
+        h = c['single'] + c['double'] + c['triple'] + c['HR']
+        babip = (h - c['HR']) / (ab - c['K'] - c['HR']) if (ab - c['K'] - c['HR']) > 0 else None
+        hr_per_pa = c['HR'] / n
+        hr_per_9 = (c['HR'] / outs_recorded * 27) if outs_recorded > 0 else None
+        m = meta['pit'].get(int(pid), {})
+        gp = g_counts.get(pid, 0)
+        gs = gs_counts.get(pid, 0)
+        out.append({
+            'id': int(pid), 'name': m.get('name'), 'team': m.get('team'),
+            'throws': m.get('throws'),
+            'ip': round(ip, 1), 'gs': int(gs), 'g': int(gp),
+            'era': None, 'fip': None, 'xfip': None, 'xera': None,  # FG fills these
+            'war': None, 'whip': None,
+            'k_pct': round(c['K'] / n, 4),
+            'bb_pct': round(c['BB'] / n, 4),
+            'hr_per_9': round(hr_per_9, 3) if hr_per_9 is not None else None,
+            'hr_per_pa': round(hr_per_pa, 4),
+            'babip': round(babip, 4) if babip is not None else None,
+            'gb_pct': None, 'lob_pct': None,
+            'stuff_plus': None, 'location_plus': None, 'pitching_plus': None,  # FG augments
+        })
+    return out
+
+
+def compute_league(batters, pitchers):
+    def w(rows, k, wkey):
+        n, d = 0, 0
+        for r in rows:
+            v, wt = r.get(k), r.get(wkey) or 1
+            if v is not None and isinstance(v, (int, float)) and v == v:
+                n += v * wt; d += wt
+        return round(n / d, 4) if d > 0 else None
+    total_pa = sum((r.get('pa') or 0) for r in batters)
+    total_hr = sum((r.get('hr') or 0) for r in batters)
+    return {
+        'bat': {
+            'k_pct':  w(batters, 'k_pct',  'pa'),
+            'bb_pct': w(batters, 'bb_pct', 'pa'),
+            'woba':   w(batters, 'woba',   'pa'),
+            'babip':  w(batters, 'babip',  'ab'),
+            'iso':    w(batters, 'iso',    'ab'),
+            'avg':    w(batters, 'avg',    'ab'),
+            'obp':    w(batters, 'obp',    'pa'),
+            'slg':    w(batters, 'slg',    'ab'),
+            'hr_per_pa': round(total_hr / max(1, total_pa), 4),
+        },
+        'pit': {
+            'k_pct':  w(pitchers, 'k_pct',  'ip'),
+            'bb_pct': w(pitchers, 'bb_pct', 'ip'),
+            'babip':  w(pitchers, 'babip',  'ip'),
+            'hr_per_pa': w(pitchers, 'hr_per_pa', 'ip'),
+        },
+        'season': SEASON,
+    }
+
+
+def augment_from_fg(batters, pitchers):
+    """Pull wRC+, Stuff+/Location+/Pitching+ from FG JSON files if present
+    on disk. When FG was reachable, these files have content; when blocked,
+    they're empty arrays and this is a no-op."""
+    by_b = {b['id']: b for b in batters}
+    by_p = {p['id']: p for p in pitchers}
+    fg_bat = DATA / 'fg-bat.json'
+    fg_pit = DATA / 'fg-pit.json'
+    fg_sp  = DATA / 'fg-stuffplus.json'
+    augmented_b, augmented_p = 0, 0
+
+    if fg_bat.exists():
+        try:
+            fg = json.loads(fg_bat.read_text() or '[]')
+            for r in fg:
+                bid = r.get('xMLBAMID') or r.get('playerid')
+                if not bid or bid not in by_b: continue
+                if 'wRC+' in r and r['wRC+'] is not None: by_b[bid]['wrc_plus'] = r['wRC+']
+                augmented_b += 1
+        except Exception as e:
+            print(f'  FG-bat augment skipped: {e}')
+    if fg_pit.exists():
+        try:
+            fg = json.loads(fg_pit.read_text() or '[]')
+            for r in fg:
+                pid = r.get('xMLBAMID') or r.get('playerid')
+                if not pid or pid not in by_p: continue
+                # Fill in FG-only fields when available
+                for src, dst in [('ERA', 'era'), ('FIP', 'fip'), ('xFIP', 'xfip'),
+                                 ('xERA', 'xera'), ('WAR', 'war'), ('WHIP', 'whip')]:
+                    v = r.get(src)
+                    if v is not None: by_p[pid][dst] = v
+                augmented_p += 1
+        except Exception as e:
+            print(f'  FG-pit augment skipped: {e}')
+    if fg_sp.exists():
+        try:
+            sp = json.loads(fg_sp.read_text() or '[]')
+            for r in sp:
+                pid = r.get('xMLBAMID') or r.get('playerid')
+                if not pid or pid not in by_p: continue
+                for src, dst in [('sp_stuff', 'stuff_plus'), ('sp_location', 'location_plus'),
+                                 ('sp_pitching', 'pitching_plus')]:
+                    v = r.get(src)
+                    if v is not None: by_p[pid][dst] = v
+        except Exception as e:
+            print(f'  FG-sp augment skipped: {e}')
+    print(f'  FG augmented: {augmented_b} batters, {augmented_p} pitchers')
+
+
 def main():
     print(f'Season {SEASON} · pulling Statcast {start}..{end}')
     t0 = time.time()
     sc = statcast(start_dt=str(start), end_dt=str(end))
     print(f'  {len(sc):,} pitches in {time.time()-t0:.0f}s')
     if len(sc) == 0:
-        print('No pitches — writing empty feature files so the UI degrades gracefully.')
-        for f in ['bat_splits.json', 'pit_splits.json', 'bat_whiff.json', 'pit_arsenal.json']:
-            (DATA / f).write_text('{}')
+        print('No pitches — leaving existing files intact.')
         (DATA / 'park_factors.json').write_text(json.dumps(PARK_FACTORS))
         return
 
     pa = to_pa_outcomes(sc)
     print(f'  {len(pa):,} labeled PAs')
 
+    # ─── primary stats (Statcast-derived) ───
+    meta = player_meta(sc)
+    batters  = compute_batters_from_statcast(pa, meta)
+    pitchers = compute_pitchers_from_statcast(pa, sc, meta)
+
+    # Resolve names + canonical bats/throws via MLB Stats API
+    all_ids = [b['id'] for b in batters] + [p['id'] for p in pitchers]
+    people = mlb_people_lookup(all_ids)
+    print(f'  resolved {len(people):,} player names via MLB Stats API')
+    for b in batters:
+        p = people.get(b['id']) or {}
+        if p.get('fullName'): b['name'] = p['fullName']
+        if p.get('bats'):     b['bats'] = p['bats']
+    for p_row in pitchers:
+        p = people.get(p_row['id']) or {}
+        if p.get('fullName'): p_row['name'] = p['fullName']
+        if p.get('throws'):   p_row['throws'] = p['throws']
+
+    augment_from_fg(batters, pitchers)
+    league   = compute_league(batters, pitchers)
+
+    # ─── matchup-context features ───
     bat_splits  = compute_splits(pa, 'batter', 'p_throws')
     pit_splits  = compute_splits(pa, 'pitcher', 'stand')
     bat_whiff   = compute_whiff(sc)
     pit_arsenal = compute_arsenal(sc)
 
-    print(f'  bat_splits={len(bat_splits)} pit_splits={len(pit_splits)} '
+    print(f'  batters={len(batters)} pitchers={len(pitchers)} '
+          f'bat_splits={len(bat_splits)} pit_splits={len(pit_splits)} '
           f'bat_whiff={len(bat_whiff)} pit_arsenal={len(pit_arsenal)}')
 
+    (DATA / 'batters.json').write_text(json.dumps(batters))
+    (DATA / 'pitchers.json').write_text(json.dumps(pitchers))
+    (DATA / 'league.json').write_text(json.dumps(league))
     (DATA / 'bat_splits.json').write_text(json.dumps(bat_splits))
     (DATA / 'pit_splits.json').write_text(json.dumps(pit_splits))
     (DATA / 'bat_whiff.json').write_text(json.dumps(bat_whiff))
