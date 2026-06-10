@@ -496,7 +496,33 @@ def main():
     bat_whiff   = compute_whiff(sc)
     pit_arsenal = compute_arsenal(sc)
     recent      = compute_recent(pa, days_back=30)
-    h2h         = compute_h2h(pa, min_pa=10)
+
+    # ─── H2H accumulation across multi-year window ───
+    # Pitcher-batter pairs almost never reach 10 PA inside a single in-season
+    # window. Pull the prior two seasons of PA outcomes and combine with the
+    # current-season pa so the ≥10-PA threshold actually fires for ~most
+    # active starter-vs-regular-batter pairs.
+    h2h_years_back = int(os.environ.get('H2H_YEARS_BACK', '2'))
+    h2h_pa = pa[['pitcher', 'batter', 'outcome']].copy()
+    h2h_seasons = [SEASON]
+    for yr in range(SEASON - 1, SEASON - 1 - h2h_years_back, -1):
+        try:
+            print(f'  pulling Statcast {yr} for H2H accumulation (cached after first run)...')
+            t_yr = time.time()
+            sc_yr = statcast(start_dt=f'{yr}-03-20', end_dt=f'{yr}-10-05')
+            if sc_yr is None or sc_yr.empty:
+                print(f'    {yr}: empty pull (likely Statcast outage); skipping')
+                continue
+            pa_yr = to_pa_outcomes(sc_yr)
+            h2h_pa = pd.concat([h2h_pa, pa_yr[['pitcher', 'batter', 'outcome']]],
+                                ignore_index=True)
+            h2h_seasons.append(yr)
+            print(f'    {yr}: +{len(pa_yr):,} PAs ({time.time() - t_yr:.0f}s)')
+        except Exception as e:
+            print(f'    {yr}: failed ({e}); skipping')
+    h2h = compute_h2h(h2h_pa, min_pa=10)
+    print(f'  h2h built from seasons {sorted(h2h_seasons)} '
+          f'({len(h2h_pa):,} total PAs)')
 
     print(f'  batters={len(batters)} pitchers={len(pitchers)} '
           f'bat_splits={len(bat_splits)} pit_splits={len(pit_splits)} '
