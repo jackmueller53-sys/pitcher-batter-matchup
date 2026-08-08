@@ -22,23 +22,24 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ─────────────────────────── HTTP helper ──────────────────────────────
 // FanGraphs is behind Cloudflare; CI requests get 403'd without browser-y
-// headers. Real Chrome 124 macOS header set + CORS-proxy fallback on 4xx.
-
+// headers. Honest NON-browser header set + CORS-proxy fallback on 4xx.
+//
+// FanGraphs sits behind Cloudflare, whose bot challenge fires when a request
+// CLAIMS to be a browser (Chrome UA + Sec-Ch-Ua hints) but has a Node/curl TLS
+// fingerprint — the mismatch is the tell, and it returns HTTP 403. Verified
+// (2026-08) against the live endpoint: a plain/branded UA gets 200, a fake
+// Chrome UA gets 403. So we deliberately do NOT impersonate a browser. (Same
+// fix already applied in the baseball-hub repo.)
 const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/csv;q=0.9, */*;q=0.1',
-  'Accept-Language': 'en-US,en;q=0.9',
+  'User-Agent': 'pitcher-batter-matchup/1.0 (+https://github.com/jackmueller53-sys/pitcher-batter-matchup)',
+  'Accept': 'application/json, text/csv, text/plain, */*',
   'Accept-Encoding': 'identity',
-  'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-  'Sec-Ch-Ua-Mobile': '?0',
-  'Sec-Ch-Ua-Platform': '"macOS"',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-site',
 };
 const PROXIES = [
   (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
   (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+  (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
 ];
 
 function directFetch(url, maxRedirects = 5) {
