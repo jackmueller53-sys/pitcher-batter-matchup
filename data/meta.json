@@ -1,11 +1,11 @@
 {
-  "fetchedAt": "2026-08-13T09:14:16.549Z",
+  "fetchedAt": "2026-08-14T09:09:02.631Z",
   "season": 2026,
   "counts": {
     "batters": 488,
-    "pitchers": 471,
-    "stuffplus": 796
+    "pitchers": 472,
+    "stuffplus": 798
   },
   "errors": [],
-  "durationMs": 647
+  "durationMs": 695
 }
