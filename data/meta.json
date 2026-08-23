@@ -1,15 +1,11 @@
 {
-  "fetchedAt": "2026-08-22T08:33:08.949Z",
+  "fetchedAt": "2026-08-23T08:32:29.387Z",
   "season": 2026,
   "counts": {
-    "batters": 0,
-    "pitchers": 0,
-    "stuffplus": 0
+    "batters": 499,
+    "pitchers": 480,
+    "stuffplus": 814
   },
-  "errors": [
-    "bat: FG bat/8 bad JSON: <!DOCTYPE html><html lang=\"en-US\"><head><title>Just a moment...</title><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"><meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\"><meta nam",
-    "pit: FG pit/8 bad JSON: <!DOCTYPE html><html lang=\"en-US\"><head><title>Just a moment...</title><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"><meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\"><meta nam",
-    "stuffplus: FG pit/36 bad JSON: <!DOCTYPE html><html lang=\"en-US\"><head><title>Just a moment...</title><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"><meta http-equiv=\"X-UA-Compatible\" content=\"IE=Edge\"><meta nam"
-  ],
-  "durationMs": 19303
+  "errors": [],
+  "durationMs": 1789
 }
