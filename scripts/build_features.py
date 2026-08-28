@@ -206,23 +206,43 @@ def compute_recent(pa, days_back=30):
     return {'bat': bat, 'pit': pit}
 
 
-def compute_h2h(pa, min_pa=10):
-    """Pitcher-vs-batter head-to-head outcome counts over the loaded window.
-    Stored only when ≥ min_pa total PAs — anything less is too noisy to use."""
+def compute_h2h(pa, min_pa=10, recent_n=12):
+    """Pitcher-vs-batter head-to-head over the loaded window. Stored only when
+    ≥ min_pa total PAs — anything less is too noisy to use.
+
+    Beyond the rate fields the model reads (pa/k_pct/bb_pct/hr_per_pa), this
+    also stores the full batting line + a compact recent-PA log so the UI can
+    show the actual 'previous AB results' between the two players."""
     out = {}
+    has_date = 'game_date' in pa.columns
     g = pa.groupby(['pitcher', 'batter'])
     for (pid, bid), grp in g:
         n = len(grp)
         if n < min_pa: continue
         c = {e: int((grp['outcome'] == e).sum()) for e in
              ['K','BB','HBP','HR','triple','double','single','out_in_play']}
-        key = f'{int(pid)}|{int(bid)}'
-        out[key] = {
+        b1, b2, b3, hr = c['single'], c['double'], c['triple'], c['HR']
+        bb, so, hbp = c['BB'], c['K'], c['HBP']
+        h = b1 + b2 + b3 + hr
+        # Statcast PA outcomes carry no sac fly/bunt bucket, so AB ≈ PA − BB − HBP.
+        ab = max(0, n - bb - hbp)
+        entry = {
             'pa': n,
             'k_pct': round(c['K']/n, 4),
             'bb_pct': round(c['BB']/n, 4),
             'hr_per_pa': round(c['HR']/n, 4),
+            'ab': ab, 'h': h, 'b1': b1, 'b2': b2, 'b3': b3, 'hr': hr,
+            'bb': bb, 'so': so, 'hbp': hbp,
+            'avg': round(h/ab, 3) if ab else 0.0,
+            'obp': round((h + bb + hbp)/n, 3) if n else 0.0,
+            'slg': round((b1 + 2*b2 + 3*b3 + 4*hr)/ab, 3) if ab else 0.0,
         }
+        if has_date:
+            recent = grp.sort_values('game_date').tail(recent_n)
+            # newest-first list of [YYYY-MM-DD, outcome]
+            entry['recent'] = [[str(d)[:10], o] for d, o in zip(
+                list(recent['game_date'])[::-1], list(recent['outcome'])[::-1])]
+        out[f'{int(pid)}|{int(bid)}'] = entry
     return out
 
 
@@ -503,7 +523,7 @@ def main():
     # current-season pa so the ≥10-PA threshold actually fires for ~most
     # active starter-vs-regular-batter pairs.
     h2h_years_back = int(os.environ.get('H2H_YEARS_BACK', '2'))
-    h2h_pa = pa[['pitcher', 'batter', 'outcome']].copy()
+    h2h_pa = pa[['pitcher', 'batter', 'outcome', 'game_date']].copy()
     h2h_seasons = [SEASON]
     for yr in range(SEASON - 1, SEASON - 1 - h2h_years_back, -1):
         try:
@@ -514,7 +534,7 @@ def main():
                 print(f'    {yr}: empty pull (likely Statcast outage); skipping')
                 continue
             pa_yr = to_pa_outcomes(sc_yr)
-            h2h_pa = pd.concat([h2h_pa, pa_yr[['pitcher', 'batter', 'outcome']]],
+            h2h_pa = pd.concat([h2h_pa, pa_yr[['pitcher', 'batter', 'outcome', 'game_date']]],
                                 ignore_index=True)
             h2h_seasons.append(yr)
             print(f'    {yr}: +{len(pa_yr):,} PAs ({time.time() - t_yr:.0f}s)')

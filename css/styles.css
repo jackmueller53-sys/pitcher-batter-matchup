@@ -282,3 +282,23 @@ select {
 @media (max-width: 800px) {
   .runs-summary { grid-template-columns: 1fr; }
 }
+
+/* ─── Previous matchups (H2H AB results) ─────────────────────────────── */
+.card-h2h { grid-column: 1 / -1; }   /* full width below the 3-card grid */
+.h2h-sub { font-family: var(--mono); text-transform: none; letter-spacing: 0;
+  font-size: 11px; color: var(--fg3); margin-left: 8px; }
+.h2h-line { font-family: var(--hdr); font-size: 22px; color: var(--fg); display: flex;
+  align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.h2h-line b { font-weight: 800; }
+.h2h-slash { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--fg2); }
+.h2h-pa { font-family: var(--mono); font-size: 12px; color: var(--fg3); }
+.h2h-extra { font-family: var(--mono); font-size: 12px; color: var(--fg2); margin-top: 4px; }
+.h2h-log-lbl { font-family: var(--hdr); font-size: 10px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--fg3); margin: 12px 0 6px; }
+.h2h-log { display: flex; flex-wrap: wrap; gap: 5px; }
+.h2h-ab { display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 7px;
+  border-radius: 5px; font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.h2h-ab em { font-style: normal; font-size: 9px; font-weight: 400; opacity: .7; }
+.h2h-hit  { background: rgba(4,120,87,.12);  color: #047857; }
+.h2h-out  { background: rgba(45,36,24,.07);   color: var(--fg2); }
+.h2h-walk { background: rgba(29,78,216,.10);  color: #1D4ED8; }

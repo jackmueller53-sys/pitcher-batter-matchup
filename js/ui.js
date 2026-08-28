@@ -169,8 +169,46 @@
               </div>`).join('')}
         </div>
       </div>
+
+      ${renderH2H(D.h2h && D.h2h[p.id + '|' + b.id], p, b)}
     `;
   }
+
+  // ─── Previous matchups (actual AB results, pitcher vs this batter) ───
+  // Reads the enriched h2h entry: full line + a recent PA log. Degrades to the
+  // rate-only fields on older data, and to a hint when the pair is unseen.
+  const _OUT_LABEL = { single:'1B', double:'2B', triple:'3B', HR:'HR', BB:'BB', HBP:'HBP', K:'K', out_in_play:'Out' };
+  const _OUT_CLASS = { single:'hit', double:'hit', triple:'hit', HR:'hit', BB:'walk', HBP:'walk', K:'out', out_in_play:'out' };
+  function renderH2H(h, p, b) {
+    const title = `<div class="card-h">Previous matchups <span class="h2h-sub">${escHTML(b.name)} vs. ${escHTML(p.name)}</span></div>`;
+    if (!h || !h.pa) {
+      return `<div class="card card-h2h">${title}<div class="hint">No prior batter-vs-pitcher history (fewer than 10 career PA in the Statcast window).</div></div>`;
+    }
+    const slash = (h.avg != null && h.ab)
+      ? `<span class="h2h-slash">${dec3(h.avg)}/${dec3(h.obp)}/${dec3(h.slg)}</span>` : '';
+    const forLine = (h.ab != null)
+      ? `<b>${h.h}-for-${h.ab}</b>` : `<b>${h.pa} PA</b>`;
+    const xb = [];
+    if (h.hr) xb.push(`${h.hr} HR`);
+    if (h.b3) xb.push(`${h.b3} 3B`);
+    if (h.b2) xb.push(`${h.b2} 2B`);
+    if (h.bb) xb.push(`${h.bb} BB`);
+    if (h.so != null) xb.push(`${h.so} K`);
+    if (h.hbp) xb.push(`${h.hbp} HBP`);
+    const extra = xb.length ? `<div class="h2h-extra">${xb.join(' · ')}</div>` : '';
+    const line = `<div class="h2h-line">${forLine} ${slash} <span class="h2h-pa">${h.pa} PA</span></div>${extra}`;
+    let log = '';
+    if (Array.isArray(h.recent) && h.recent.length) {
+      const chips = h.recent.map(([d, o]) => {
+        const lbl = _OUT_LABEL[o] || o;
+        const cls = _OUT_CLASS[o] || 'out';
+        return `<span class="h2h-ab h2h-${cls}" title="${escHTML(d)}">${escHTML(lbl)}<em>${escHTML((d || '').slice(5))}</em></span>`;
+      }).join('');
+      log = `<div class="h2h-log-lbl">Recent PAs (newest first)</div><div class="h2h-log">${chips}</div>`;
+    }
+    return `<div class="card card-h2h">${title}${line}${log}</div>`;
+  }
+  function dec3(v) { return v == null ? '—' : Number(v).toFixed(3).replace(/^0\./, '.'); }
 
   document.addEventListener('DOMContentLoaded', function () {
     const meta = $('meta-line');
