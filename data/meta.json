@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-09-04T12:34:46.085Z",
+  "fetchedAt": "2026-09-05T11:43:02.170Z",
   "season": 2026,
   "counts": {
     "batters": 517,
@@ -7,5 +7,5 @@
     "stuffplus": 844
   },
   "errors": [],
-  "durationMs": 903
+  "durationMs": 1649
 }
